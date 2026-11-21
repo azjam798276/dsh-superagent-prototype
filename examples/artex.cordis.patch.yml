@@ -1,0 +1,76 @@
+# ARTEX integration layer for dsh-superagent.
+#
+# A profile patch fragment — merge it into $DSH_HOME/profiles/<profile>/cordis.patch.yml
+# AFTER the bundle's own rows. See docs/009-artex.md for the full procedure.
+#
+# Scope note, verified against `dsh --dump-config`: a patch row's `config`
+# REPLACES a whole config, and ids are indexed at the top level of the composed
+# tree. The rows inside an agent preset (`dsh-superagent-worker`) are therefore
+# not addressable from a profile patch, and this fragment does not pretend to
+# address them. It uses the two extension points that DO work at profile level.
+
+# --- 1. the ARTEX MCP server, for every Session in this profile -----------
+#
+# `dsh-mcp-client` is the same plugin the profile already uses for other
+# servers. Registered here, its tools are published to every Agent composed
+# under this profile, so a worker Session gets them without a preset edit.
+#
+# The command is the ARTEX binary in MCP-server mode: no database, no key
+# material, just the running instance's HTTP API and a bearer token. The token
+# travels through the environment, never as an argument, so it stays out of
+# `ps`. Put the real value in the profile's environment (a systemd
+# EnvironmentFile, or `~/.dsh/<profile>.env`), not in this file: this file is
+# ordinary world-readable configuration.
+- insert:
+    - id: mcp-artex
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        # Namespace of the tools, as mcp__artex__<tool>. Lowercase ASCII plus
+        # dashes/underscores; must be unique within the profile.
+        serverName: artex
+        transport: stdio
+        command: /opt/artex/artex
+        args:
+          - -mcp-serve
+          - -mcp-api-url
+          - http://127.0.0.1:8787
+          - -mcp-token-env
+          - ARTEX_API_TOKEN
+        cwd: /opt/artex
+        # A findings page over a large engagement can be slow; a planner round
+        # is not on this path.
+        toolCallTimeoutMs: 60000
+        # An unreachable pentest platform must not block every coding ticket:
+        # the row reports the failed connection in health and the rest of the
+        # Session starts anyway.
+        failOnStartupError: false
+        env:
+          HOME: /root
+          PATH: /usr/local/bin:/usr/bin:/bin
+          TZ: Asia/Singapore
+          # Read by `artex -mcp-serve -mcp-token-env ARTEX_API_TOKEN`.
+          # ARTEX_API_TOKEN: <from `artex mcp-token`, or the console's API token>
+
+# --- 2. the ARTEX playbooks as skills ------------------------------------
+#
+# Verified: `skill-filesystem` reads `$HOME/.agents/skills` and
+# `$DSH_HOME/skills` by default, following symlinks. So the playbooks need no
+# patch row at all — one symlink per playbook is enough, and it keeps working
+# when ARTEX updates a SKILL.md:
+#
+#   mkdir -p ~/.agents/skills
+#   for d in /opt/artex/skills/*/; do ln -sfn "$d" ~/.agents/skills/; done
+#
+# That places them in the *user* root, which every profile and every agent
+# sees. If you would rather keep them out of the shared user root, enable the
+# row below instead: a `customSkillDirs` root of the same rank, scoped to this
+# profile only. Uncomment it to use that variant — one or the other, not both,
+# or every playbook is listed twice.
+#
+# - insert:
+#     - id: skill-filesystem-artex
+#       name: '@deepseek-ai/dsh-skill-filesystem'
+#       config:
+#         customSkillDirs:
+#           - /opt/artex/skills
+#         watch: false
